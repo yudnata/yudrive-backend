@@ -5,6 +5,7 @@ import { createApp } from '../src/app';
 import { pool } from '../src/config/db';
 import { env } from '../src/config/env';
 import { r2Service } from '../src/features/uploads/r2.service';
+import { s3Client } from '../src/config/s3';
 
 async function runIntegrationTests() {
   console.log('--- STARTING BACKEND INTEGRATION TEST SUITE ---');
@@ -33,6 +34,7 @@ async function runIntegrationTests() {
       name TEXT NOT NULL,
       parent_id UUID,
       cover_media_id UUID,
+      event_date DATE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -52,8 +54,21 @@ async function runIntegrationTests() {
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready')),
       upload_id TEXT,
       folder_id UUID,
+      is_favorite BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    CREATE TABLE r2_usage_metrics (
+      id SERIAL PRIMARY KEY,
+      period_start TIMESTAMPTZ NOT NULL,
+      period_end TIMESTAMPTZ NOT NULL,
+      class_a_requests BIGINT NOT NULL DEFAULT 0,
+      class_b_requests BIGINT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    INSERT INTO r2_usage_metrics (id, period_start, period_end, class_a_requests, class_b_requests)
+    VALUES (1, now(), now(), 0, 0);
 
     CREATE INDEX idx_media_status_taken_id ON media (status, taken_at DESC, id);
   `);
@@ -96,10 +111,14 @@ async function runIntegrationTests() {
   r2Service.completeMultipartUpload = async () => {};
   r2Service.abortMultipartUpload = async () => {};
   r2Service.deleteObject = async () => {};
+  s3Client.send = (async () => ({})) as any;
   r2Service.headObject = async (key: string) => {
-    // Return expected size matching the record in media table
-    const row = db.public.one(`SELECT size_bytes FROM media WHERE object_key = '${key}'`);
-    return { sizeBytes: Number(row.size_bytes), mime: 'image/jpeg' };
+    try {
+      const row = db.public.one(`SELECT size_bytes FROM media WHERE object_key = '${key}' OR thumb_key = '${key}'`);
+      return { sizeBytes: Number(row.size_bytes), mime: 'image/jpeg' };
+    } catch {
+      return { sizeBytes: 1024, mime: 'image/jpeg' };
+    }
   };
 
   // Start express test server

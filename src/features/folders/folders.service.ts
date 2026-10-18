@@ -3,11 +3,23 @@ import { AppError } from '../../middleware/errorHandler';
 import { r2Service } from '../uploads/r2.service';
 import { CreateFolderInput, UpdateFolderInput } from './folders.schema';
 
+function formatEventDate(val: unknown): string | null {
+  if (!val) return null;
+  if (typeof val === 'string') return val.split('T')[0];
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(val).split('T')[0];
+}
+
 export async function createFolder(userId: string, input: CreateFolderInput) {
   const result = await pool.query(
     `INSERT INTO folders (owner_id, name, parent_id, event_date)
      VALUES ($1, $2, $3, $4)
-     RETURNING id, owner_id, name, parent_id, cover_media_id, event_date::text AS event_date, created_at, updated_at`,
+     RETURNING id, owner_id, name, parent_id, cover_media_id, event_date, created_at, updated_at`,
     [userId, input.name, input.parentId || null, input.eventDate || null]
   );
   return {
@@ -16,7 +28,7 @@ export async function createFolder(userId: string, input: CreateFolderInput) {
     name: result.rows[0].name,
     parentId: result.rows[0].parent_id,
     coverMediaId: result.rows[0].cover_media_id,
-    eventDate: result.rows[0].event_date || null,
+    eventDate: formatEventDate(result.rows[0].event_date),
     createdAt: result.rows[0].created_at,
     updatedAt: result.rows[0].updated_at,
     itemCount: 0,
@@ -32,7 +44,7 @@ export async function listFolders(parentId?: string | null, all?: boolean) {
   const queryParams = all ? [] : [parentId || null];
 
   const result = await pool.query(
-    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date::text AS event_date, f.created_at, f.updated_at,
+    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date, f.created_at, f.updated_at,
             COUNT(m.id)::int AS item_count,
             COALESCE(SUM(m.size_bytes), 0)::bigint AS total_bytes,
             cov.thumb_key AS cover_thumb_key,
@@ -63,7 +75,7 @@ export async function listFolders(parentId?: string | null, all?: boolean) {
         name: row.name,
         parentId: row.parent_id,
         coverMediaId: row.cover_media_id,
-        eventDate: row.event_date || null,
+        eventDate: formatEventDate(row.event_date),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         itemCount: row.item_count,
@@ -78,7 +90,7 @@ export async function listFolders(parentId?: string | null, all?: boolean) {
 
 export async function getFolder(folderId: string) {
   const result = await pool.query(
-    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date::text AS event_date, f.created_at, f.updated_at,
+    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date, f.created_at, f.updated_at,
             COUNT(m.id)::int AS item_count,
             COALESCE(SUM(m.size_bytes), 0)::bigint AS total_bytes,
             cov.thumb_key AS cover_thumb_key,
@@ -112,7 +124,7 @@ export async function getFolder(folderId: string) {
     name: row.name,
     parentId: row.parent_id,
     coverMediaId: row.cover_media_id,
-    eventDate: row.event_date || null,
+    eventDate: formatEventDate(row.event_date),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     itemCount: row.item_count,

@@ -29,6 +29,18 @@ function encodeCursor(sortTime: string, id: string): string {
   return Buffer.from(json, 'utf8').toString('base64url');
 }
 
+function formatFolderEventDate(val: unknown): string | undefined {
+  if (!val) return undefined;
+  if (typeof val === 'string') return val.split('T')[0];
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(val).split('T')[0];
+}
+
 export async function listMedia(query: ListMediaQuery) {
   // Trigger non-blocking cleanup of stale pending uploads
   cleanupStalePendingMedia().catch((err) => {
@@ -44,7 +56,7 @@ export async function listMedia(query: ListMediaQuery) {
            m.is_favorite,
            u.name AS owner_name, u.email AS owner_email,
            f.name AS folder_name,
-           f.event_date::text AS folder_event_date,
+           f.event_date AS folder_event_date,
            COALESCE(f.event_date, m.taken_at, m.created_at) AS sort_time
     FROM media m
     LEFT JOIN users u ON m.owner_id = u.id
@@ -98,7 +110,7 @@ export async function listMedia(query: ListMediaQuery) {
         ownerEmail: row.owner_email || undefined,
         folderId: row.folder_id || undefined,
         folderName: row.folder_name || undefined,
-        folderEventDate: row.folder_event_date ? row.folder_event_date.split('T')[0] : undefined,
+        folderEventDate: formatFolderEventDate(row.folder_event_date),
         filename: path.basename(row.object_key),
         type: row.type,
         mime: row.mime,
@@ -139,7 +151,7 @@ export async function getRandomMedia(limitPerFolder = 3, totalLimit = 50) {
              m.is_favorite,
              u.name AS owner_name, u.email AS owner_email,
              f.name AS folder_name,
-             f.event_date::text AS folder_event_date,
+             f.event_date AS folder_event_date,
              ROW_NUMBER() OVER (
                PARTITION BY COALESCE(m.folder_id::text, 'unfiled') 
                ORDER BY RANDOM()
@@ -176,7 +188,7 @@ export async function getRandomMedia(limitPerFolder = 3, totalLimit = 50) {
         ownerEmail: row.owner_email || undefined,
         folderId: row.folder_id || undefined,
         folderName: row.folder_name || undefined,
-        folderEventDate: row.folder_event_date ? row.folder_event_date.split('T')[0] : undefined,
+        folderEventDate: formatFolderEventDate(row.folder_event_date),
         filename: path.basename(row.object_key),
         type: row.type,
         mime: row.mime,
