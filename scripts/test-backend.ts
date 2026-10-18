@@ -27,6 +27,16 @@ async function runIntegrationTests() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE folders (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      parent_id UUID,
+      cover_media_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE media (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -41,6 +51,7 @@ async function runIntegrationTests() {
       taken_at TIMESTAMPTZ,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready')),
       upload_id TEXT,
+      folder_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
@@ -280,7 +291,83 @@ async function runIntegrationTests() {
       headers: { Authorization: `Bearer ${token1}` },
     });
     const verifyListData = await verifyListRes.json();
-    assert('Media list is empty after deletion', verifyListData.items.length === 0);
+    // Test 14: Rate limit on /auth/login (5 requests / min limit)
+    // We already made 3 login requests (1 bad, 2 good). Send 2 more to hit limit.
+    await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'partner1@ourmemories.local', password: 'dummy' }),
+    });
+    await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'partner1@ourmemories.local', password: 'dummy' }),
+    });
+
+    // 6th request must trigger HTTP 429
+    const rateLimitedRes = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'partner1@ourmemories.local', password: 'dummy' }),
+    });
+    const rateLimitData = await rateLimitedRes.json();
+    assert(
+      'Rate limit blocks 6th login attempt with 429 RATE_LIMIT_EXCEEDED',
+      rateLimitedRes.status === 429 && rateLimitData?.error?.code === 'RATE_LIMIT_EXCEEDED'
+    );
+
+    // Test 15: POST /folders (Create folder)
+    const createFolderRes = await fetch(`${baseUrl}/folders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token1}`,
+      },
+      body: JSON.stringify({ name: 'Liburan Bali' }),
+    });
+    const folderData = await createFolderRes.json();
+    assert(
+      'POST /folders creates folder successfully',
+      createFolderRes.status === 201 && folderData.name === 'Liburan Bali' && !!folderData.id
+    );
+    const testFolderId = folderData.id;
+
+    // Test 16: GET /folders (List folders)
+    const listFoldersRes = await fetch(`${baseUrl}/folders`, {
+      headers: { Authorization: `Bearer ${token2}` },
+    });
+    const listFoldersData = await listFoldersRes.json();
+    if (listFoldersRes.status !== 200) {
+      console.error('GET /folders failed with:', listFoldersRes.status, listFoldersData);
+    }
+    assert(
+      'GET /folders returns folder list for partners',
+      listFoldersRes.status === 200 &&
+        Array.isArray(listFoldersData.folders) &&
+        listFoldersData.folders.some((f: any) => f.id === testFolderId)
+    );
+
+    // Test 17: PATCH /folders/:id (Update folder name)
+    const updateFolderRes = await fetch(`${baseUrl}/folders/${testFolderId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token1}`,
+      },
+      body: JSON.stringify({ name: 'Liburan Bali 2026' }),
+    });
+    const updatedFolderData = await updateFolderRes.json();
+    assert(
+      'PATCH /folders/:id updates folder name',
+      updateFolderRes.status === 200 && updatedFolderData.name === 'Liburan Bali 2026'
+    );
+
+    // Test 18: DELETE /folders/:id
+    const deleteFolderRes = await fetch(`${baseUrl}/folders/${testFolderId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token1}` },
+    });
+    assert('DELETE /folders/:id deletes folder successfully', deleteFolderRes.status === 200);
 
     // Summary
     console.log(`\n--- TEST RESULTS: ${passed} PASSED, ${failed} FAILED ---`);

@@ -1,9 +1,13 @@
 import { Router } from 'express';
-import { handleGetMe } from './users.controller';
+import { handleGetMe, handleGetAllUsers, handleGetR2Usage } from './users.controller';
 import { requireAuth } from '../../middleware/auth';
 
 const router = Router();
 
-router.get('/', requireAuth, handleGetMe);
+router.use(requireAuth);
+
+router.get('/', handleGetMe);
+router.get('/r2-usage', handleGetR2Usage);
+router.get('/all', handleGetAllUsers);
 
 export const usersRouter = router;

@@ -26,9 +26,14 @@ export async function getStorageUsage(): Promise<StorageUsage> {
   };
 }
 
+import { getCloudflareUsage, CloudflareUsage } from '../r2-usage/r2-usage.service';
+
+export { getCloudflareUsage, CloudflareUsage };
+
 export async function getMe(userId: string): Promise<{
   user: { id: string; email: string; name: string; createdAt: string };
   usage: StorageUsage;
+  r2Usage: CloudflareUsage;
 }> {
   const userResult = await pool.query(
     'SELECT id, email, name, created_at FROM users WHERE id = $1',
@@ -41,6 +46,7 @@ export async function getMe(userId: string): Promise<{
 
   const user = userResult.rows[0];
   const usage = await getStorageUsage();
+  const r2Usage = await getCloudflareUsage();
 
   return {
     user: {
@@ -50,5 +56,14 @@ export async function getMe(userId: string): Promise<{
       createdAt: user.created_at.toISOString(),
     },
     usage,
+    r2Usage,
   };
 }
+
+export async function getAllUsers(): Promise<Array<{ id: string; email: string; name: string }>> {
+  const result = await pool.query(
+    'SELECT id, email, name FROM users ORDER BY name ASC'
+  );
+  return result.rows;
+}
+

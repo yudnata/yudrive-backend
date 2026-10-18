@@ -3,14 +3,26 @@ import { z } from 'zod';
 export const initUploadSchema = z.object({
   filename: z.string().min(1, 'Nama file wajib diisi'),
   mime: z.string().refine(
-    (m) => m.startsWith('image/') || m.startsWith('video/'),
+    (m) =>
+      m.startsWith('image/') ||
+      m.startsWith('video/') ||
+      m === 'application/octet-stream' ||
+      !m,
     'Hanya file foto atau video yang diperbolehkan'
   ),
   size: z.number().int().positive('Ukuran file harus lebih dari 0 byte'),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
   duration: z.number().nonnegative().optional(),
-  takenAt: z.string().datetime().optional(),
+  takenAt: z.string().nullish(),
+  folderId: z
+    .string()
+    .nullish()
+    .transform((val) => {
+      if (!val || val === 'root' || val === 'null' || val === '') return null;
+      return val;
+    })
+    .pipe(z.string().uuid('ID folder tidak valid').nullable().optional()),
 });
 
 export const completeUploadSchema = z.object({

@@ -6,11 +6,15 @@ async function runMigrations(): Promise<void> {
   const client = await pool.connect();
   try {
     console.log('Running database migrations...');
-    const migrationFile = path.join(__dirname, '../migrations/001_create_users_and_media.sql');
-    const sql = fs.readFileSync(migrationFile, 'utf8');
+    const migrationsDir = path.join(__dirname, '../migrations');
+    const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
 
     await client.query('BEGIN');
-    await client.query(sql);
+    for (const file of files) {
+      console.log(`Applying migration: ${file}`);
+      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+      await client.query(sql);
+    }
     await client.query('COMMIT');
 
     console.log('Database migrations applied successfully.');

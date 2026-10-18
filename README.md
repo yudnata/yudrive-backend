@@ -1,4 +1,4 @@
-# Our Memories — Backend API
+# Our Memories - Backend API
 
 Backend Express + TypeScript untuk aplikasi privat Our Memories.
 

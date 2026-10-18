@@ -10,13 +10,19 @@ async function seedUsers(): Promise<void> {
   const hash2 = await argon2.hash(pwd2);
 
   const users = [
-    { email: 'user1@ourmemories.local', name: 'Partner 1', hash: hash1 },
-    { email: 'user2@ourmemories.local', name: 'Partner 2', hash: hash2 },
+    { email: 'yudhinata04@gmail.com', name: 'Yudhi Adinata', hash: hash1 },
+    { email: 'winasugianti@gmail.com', name: 'Wina Sugianti', hash: hash2 },
   ];
 
   const client = await pool.connect();
   try {
     console.log('Seeding initial 2 users...');
+
+    // Clean up temporary dummy users if present
+    await client.query(
+      `DELETE FROM users WHERE email IN ('user1@ourmemories.local', 'user2@ourmemories.local')`
+    );
+
     for (const u of users) {
       await client.query(
         `INSERT INTO users (email, name, password_hash)
@@ -25,7 +31,7 @@ async function seedUsers(): Promise<void> {
          DO UPDATE SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash`,
         [u.email, u.name, u.hash]
       );
-      console.log(`Seeded user: ${u.email}`);
+      console.log(`Seeded user: ${u.email} (${u.name})`);
     }
     console.log('Seeding completed successfully.');
   } catch (error) {

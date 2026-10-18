@@ -7,6 +7,7 @@ import {
   AbortMultipartUploadCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { s3Client } from '../../config/s3';
@@ -29,11 +30,12 @@ export class R2Service {
     return getSignedUrl(s3Client, command, { expiresIn });
   }
 
-  // Presigned GET URL (default 1 hour = 3600s)
-  async getPresignedGetUrl(key: string, expiresIn = 3600): Promise<string> {
+  // Presigned GET URL (default 1 hour = 3600s, optional attachment disposition for download)
+  async getPresignedGetUrl(key: string, expiresIn = 3600, filename?: string): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
+      ...(filename ? { ResponseContentDisposition: `attachment; filename="${encodeURIComponent(filename)}"` } : {}),
     });
     return getSignedUrl(s3Client, command, { expiresIn });
   }
@@ -114,6 +116,16 @@ export class R2Service {
     const command = new DeleteObjectCommand({
       Bucket: this.bucket,
       Key: key,
+    });
+    await s3Client.send(command);
+  }
+
+  // Copy object within R2
+  async copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+    const command = new CopyObjectCommand({
+      Bucket: this.bucket,
+      CopySource: `${this.bucket}/${encodeURI(sourceKey)}`,
+      Key: destinationKey,
     });
     await s3Client.send(command);
   }
