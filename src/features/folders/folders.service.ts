@@ -5,22 +5,34 @@ import { CreateFolderInput, UpdateFolderInput } from './folders.schema';
 
 export async function createFolder(userId: string, input: CreateFolderInput) {
   const result = await pool.query(
-    `INSERT INTO folders (owner_id, name, parent_id)
-     VALUES ($1, $2, $3)
-     RETURNING id, owner_id, name, parent_id, cover_media_id, created_at, updated_at`,
-    [userId, input.name, input.parentId || null]
+    `INSERT INTO folders (owner_id, name, parent_id, event_date)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, owner_id, name, parent_id, cover_media_id, event_date::text AS event_date, created_at, updated_at`,
+    [userId, input.name, input.parentId || null, input.eventDate || null]
   );
   return {
-    ...result.rows[0],
+    id: result.rows[0].id,
+    ownerId: result.rows[0].owner_id,
+    name: result.rows[0].name,
+    parentId: result.rows[0].parent_id,
+    coverMediaId: result.rows[0].cover_media_id,
+    eventDate: result.rows[0].event_date || null,
+    createdAt: result.rows[0].created_at,
+    updatedAt: result.rows[0].updated_at,
     itemCount: 0,
     totalBytes: 0,
     coverUrl: null,
   };
 }
 
-export async function listFolders(parentId?: string | null) {
+export async function listFolders(parentId?: string | null, all?: boolean) {
+  const whereClause = all
+    ? '1=1'
+    : '($1::uuid IS NULL AND f.parent_id IS NULL) OR (f.parent_id = $1::uuid)';
+  const queryParams = all ? [] : [parentId || null];
+
   const result = await pool.query(
-    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.created_at, f.updated_at,
+    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date::text AS event_date, f.created_at, f.updated_at,
             COUNT(m.id)::int AS item_count,
             COALESCE(SUM(m.size_bytes), 0)::bigint AS total_bytes,
             cov.thumb_key AS cover_thumb_key,
@@ -28,10 +40,10 @@ export async function listFolders(parentId?: string | null) {
      FROM folders f
      LEFT JOIN media m ON m.folder_id = f.id AND m.status = 'ready'
      LEFT JOIN media cov ON cov.id = f.cover_media_id AND cov.status = 'ready'
-     WHERE ($1::uuid IS NULL AND f.parent_id IS NULL) OR (f.parent_id = $1::uuid)
-     GROUP BY f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.created_at, f.updated_at, cov.thumb_key
-     ORDER BY f.name ASC`,
-    [parentId || null]
+     WHERE ${whereClause}
+     GROUP BY f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date, f.created_at, f.updated_at, cov.thumb_key
+     ORDER BY f.event_date DESC NULLS LAST, f.name ASC`,
+    queryParams
   );
 
   const folders = await Promise.all(
@@ -51,6 +63,7 @@ export async function listFolders(parentId?: string | null) {
         name: row.name,
         parentId: row.parent_id,
         coverMediaId: row.cover_media_id,
+        eventDate: row.event_date || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         itemCount: row.item_count,
@@ -65,7 +78,7 @@ export async function listFolders(parentId?: string | null) {
 
 export async function getFolder(folderId: string) {
   const result = await pool.query(
-    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.created_at, f.updated_at,
+    `SELECT f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date::text AS event_date, f.created_at, f.updated_at,
             COUNT(m.id)::int AS item_count,
             COALESCE(SUM(m.size_bytes), 0)::bigint AS total_bytes,
             cov.thumb_key AS cover_thumb_key,
@@ -74,7 +87,7 @@ export async function getFolder(folderId: string) {
      LEFT JOIN media m ON m.folder_id = f.id AND m.status = 'ready'
      LEFT JOIN media cov ON cov.id = f.cover_media_id AND cov.status = 'ready'
      WHERE f.id = $1
-     GROUP BY f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.created_at, f.updated_at, cov.thumb_key`,
+     GROUP BY f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date, f.created_at, f.updated_at, cov.thumb_key`,
     [folderId]
   );
 
@@ -99,6 +112,7 @@ export async function getFolder(folderId: string) {
     name: row.name,
     parentId: row.parent_id,
     coverMediaId: row.cover_media_id,
+    eventDate: row.event_date || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     itemCount: row.item_count,
@@ -124,6 +138,11 @@ export async function updateFolder(folderId: string, input: UpdateFolderInput) {
   if (input.coverMediaId !== undefined) {
     params.push(input.coverMediaId);
     updates.push(`cover_media_id = $${params.length}`);
+  }
+
+  if (input.eventDate !== undefined) {
+    params.push(input.eventDate);
+    updates.push(`event_date = $${params.length}`);
   }
 
   await pool.query(

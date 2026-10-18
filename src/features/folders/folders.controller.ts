@@ -45,7 +45,8 @@ export async function handleListFolders(
   try {
     const parseResult = listFoldersQuerySchema.safeParse(req.query);
     const parentId = parseResult.success ? parseResult.data.parentId : undefined;
-    const folders = await listFolders(parentId);
+    const all = parseResult.success ? Boolean(parseResult.data.all) : false;
+    const folders = await listFolders(parentId, all);
     res.status(200).json({ folders });
   } catch (err) {
     next(err);
