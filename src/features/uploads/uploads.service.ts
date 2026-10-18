@@ -87,8 +87,8 @@ export async function initUpload(userId: string, input: InitUploadInput) {
   await pool.query(
     `INSERT INTO media (
       id, owner_id, type, object_key, thumb_key, mime, size_bytes,
-      width, height, duration_sec, taken_at, status, upload_id
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)`,
+      width, height, duration_sec, taken_at, status, upload_id, folder_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13)`,
     [
       mediaId,
       userId,
@@ -102,6 +102,7 @@ export async function initUpload(userId: string, input: InitUploadInput) {
       input.duration || null,
       input.takenAt ? new Date(input.takenAt) : null,
       uploadId,
+      input.folderId || null,
     ]
   );
 

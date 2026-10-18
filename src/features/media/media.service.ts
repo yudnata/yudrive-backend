@@ -38,16 +38,25 @@ export async function listMedia(query: ListMediaQuery) {
 
   let sql = `
     SELECT id, owner_id, type, object_key, thumb_key, mime, size_bytes,
-           width, height, duration_sec, taken_at, created_at,
+           width, height, duration_sec, taken_at, created_at, folder_id,
            COALESCE(taken_at, created_at) AS sort_time
     FROM media
     WHERE status = 'ready'
   `;
   const params: any[] = [];
 
+  if (query.folderId) {
+    if (query.folderId === 'root' || query.folderId === 'null') {
+      sql += ` AND folder_id IS NULL`;
+    } else if (query.folderId !== 'all') {
+      params.push(query.folderId);
+      sql += ` AND folder_id = $${params.length}`;
+    }
+  }
+
   if (cursor) {
     params.push(cursor.sortTime, cursor.id);
-    sql += ` AND (COALESCE(taken_at, created_at), id) < ($1::timestamptz, $2::uuid)`;
+    sql += ` AND (COALESCE(taken_at, created_at), id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
   }
 
   const limitParamIndex = params.length + 1;
@@ -73,6 +82,7 @@ export async function listMedia(query: ListMediaQuery) {
       return {
         id: row.id,
         ownerId: row.owner_id,
+        folderId: row.folder_id || undefined,
         type: row.type,
         mime: row.mime,
         sizeBytes: Number(row.size_bytes),

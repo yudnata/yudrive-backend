@@ -11,6 +11,7 @@ export const initUploadSchema = z.object({
   height: z.number().int().positive().optional(),
   duration: z.number().nonnegative().optional(),
   takenAt: z.string().datetime().optional(),
+  folderId: z.string().uuid().nullable().optional(),
 });
 
 export const completeUploadSchema = z.object({

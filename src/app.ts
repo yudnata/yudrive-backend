@@ -7,6 +7,7 @@ import { authRouter } from './features/auth/auth.router';
 import { usersRouter } from './features/users/users.router';
 import { uploadsRouter } from './features/uploads/uploads.router';
 import { mediaRouter } from './features/media/media.router';
+import { foldersRouter } from './features/folders/folders.router';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 export function createApp(): express.Application {
@@ -28,7 +29,7 @@ export function createApp(): express.Application {
         return callback(new AppError(403, 'CORS_NOT_ALLOWED', 'Akses diblokir oleh kebijakan CORS.'));
       },
       credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
     })
   );
@@ -42,6 +43,7 @@ export function createApp(): express.Application {
   app.use('/me', usersRouter);
   app.use('/uploads', uploadsRouter);
   app.use('/media', mediaRouter);
+  app.use('/folders', foldersRouter);
 
   // Fallback 404 handler
   app.use((_req: Request, _res: Response, next) => {
