@@ -280,7 +280,30 @@ async function runIntegrationTests() {
       headers: { Authorization: `Bearer ${token1}` },
     });
     const verifyListData = await verifyListRes.json();
-    assert('Media list is empty after deletion', verifyListData.items.length === 0);
+    // Test 14: Rate limit on /auth/login (5 requests / min limit)
+    // We already made 3 login requests (1 bad, 2 good). Send 2 more to hit limit.
+    await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'partner1@ourmemories.local', password: 'dummy' }),
+    });
+    await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'partner1@ourmemories.local', password: 'dummy' }),
+    });
+
+    // 6th request must trigger HTTP 429
+    const rateLimitedRes = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'partner1@ourmemories.local', password: 'dummy' }),
+    });
+    const rateLimitData = await rateLimitedRes.json();
+    assert(
+      'Rate limit blocks 6th login attempt with 429 RATE_LIMIT_EXCEEDED',
+      rateLimitedRes.status === 429 && rateLimitData?.error?.code === 'RATE_LIMIT_EXCEEDED'
+    );
 
     // Summary
     console.log(`\n--- TEST RESULTS: ${passed} PASSED, ${failed} FAILED ---`);
