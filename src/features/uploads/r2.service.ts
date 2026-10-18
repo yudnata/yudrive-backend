@@ -30,11 +30,12 @@ export class R2Service {
     return getSignedUrl(s3Client, command, { expiresIn });
   }
 
-  // Presigned GET URL (default 1 hour = 3600s)
-  async getPresignedGetUrl(key: string, expiresIn = 3600): Promise<string> {
+  // Presigned GET URL (default 1 hour = 3600s, optional attachment disposition for download)
+  async getPresignedGetUrl(key: string, expiresIn = 3600, filename?: string): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
+      ...(filename ? { ResponseContentDisposition: `attachment; filename="${encodeURIComponent(filename)}"` } : {}),
     });
     return getSignedUrl(s3Client, command, { expiresIn });
   }

@@ -57,7 +57,8 @@ export async function handleGetMediaUrl(
       return;
     }
 
-    const data = await getMediaOriginalUrl(parseResult.data.id);
+    const asDownload = req.query.download === 'true';
+    const data = await getMediaOriginalUrl(parseResult.data.id, asDownload);
     res.status(200).json(data);
   } catch (err) {
     next(err);

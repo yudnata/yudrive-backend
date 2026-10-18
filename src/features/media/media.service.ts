@@ -109,7 +109,7 @@ export async function listMedia(query: ListMediaQuery) {
   };
 }
 
-export async function getMediaOriginalUrl(mediaId: string) {
+export async function getMediaOriginalUrl(mediaId: string, asDownload = false) {
   const result = await pool.query(
     `SELECT id, object_key, mime, size_bytes, status
      FROM media
@@ -122,13 +122,18 @@ export async function getMediaOriginalUrl(mediaId: string) {
   }
 
   const media = result.rows[0];
-  const url = await r2Service.getPresignedGetUrl(media.object_key, 3600);
+  const filename = path.basename(media.object_key);
+  const url = await r2Service.getPresignedGetUrl(
+    media.object_key,
+    3600,
+    asDownload ? filename : undefined
+  );
 
   return {
     url,
     mime: media.mime,
     sizeBytes: Number(media.size_bytes),
-    filename: path.basename(media.object_key),
+    filename,
   };
 }
 
