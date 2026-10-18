@@ -5,6 +5,7 @@ import { r2Service } from '../uploads/r2.service';
 import { cleanupStalePendingMedia } from '../uploads/uploads.service';
 import { getFolderCloudflarePath } from '../folders/folders.service';
 import { ListMediaQuery } from './media.schema';
+import { recordClassA, recordClassB } from '../r2-usage/r2-usage.service';
 
 interface DecodedCursor {
   sortTime: string;
@@ -38,31 +39,41 @@ export async function listMedia(query: ListMediaQuery) {
   const limit = query.limit;
 
   let sql = `
-    SELECT id, owner_id, type, object_key, thumb_key, mime, size_bytes,
-           width, height, duration_sec, taken_at, created_at, folder_id,
-           COALESCE(taken_at, created_at) AS sort_time
-    FROM media
-    WHERE status = 'ready'
+    SELECT m.id, m.owner_id, m.type, m.object_key, m.thumb_key, m.mime, m.size_bytes,
+           m.width, m.height, m.duration_sec, m.taken_at, m.created_at, m.folder_id,
+           m.is_favorite,
+           u.name AS owner_name, u.email AS owner_email,
+           f.name AS folder_name,
+           f.event_date::text AS folder_event_date,
+           COALESCE(f.event_date, m.taken_at, m.created_at) AS sort_time
+    FROM media m
+    LEFT JOIN users u ON m.owner_id = u.id
+    LEFT JOIN folders f ON m.folder_id = f.id
+    WHERE m.status = 'ready'
   `;
   const params: any[] = [];
 
+  if (query.favorite) {
+    sql += ` AND m.is_favorite = true`;
+  }
+
   if (query.folderId) {
     if (query.folderId === 'root' || query.folderId === 'null') {
-      sql += ` AND folder_id IS NULL`;
+      sql += ` AND m.folder_id IS NULL`;
     } else if (query.folderId !== 'all') {
       params.push(query.folderId);
-      sql += ` AND folder_id = $${params.length}`;
+      sql += ` AND m.folder_id = $${params.length}`;
     }
   }
 
   if (cursor) {
     params.push(cursor.sortTime, cursor.id);
-    sql += ` AND (COALESCE(taken_at, created_at), id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+    sql += ` AND (COALESCE(f.event_date, m.taken_at, m.created_at), m.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
   }
 
   const limitParamIndex = params.length + 1;
   params.push(limit + 1);
-  sql += ` ORDER BY sort_time DESC, id DESC LIMIT $${limitParamIndex}`;
+  sql += ` ORDER BY sort_time DESC, m.id DESC LIMIT $${limitParamIndex}`;
 
   const result = await pool.query(sql, params);
   const hasMore = result.rows.length > limit;
@@ -83,7 +94,12 @@ export async function listMedia(query: ListMediaQuery) {
       return {
         id: row.id,
         ownerId: row.owner_id,
+        ownerName: row.owner_name || undefined,
+        ownerEmail: row.owner_email || undefined,
         folderId: row.folder_id || undefined,
+        folderName: row.folder_name || undefined,
+        folderEventDate: row.folder_event_date ? row.folder_event_date.split('T')[0] : undefined,
+        filename: path.basename(row.object_key),
         type: row.type,
         mime: row.mime,
         sizeBytes: Number(row.size_bytes),
@@ -92,6 +108,7 @@ export async function listMedia(query: ListMediaQuery) {
         durationSec: row.duration_sec ? Number(row.duration_sec) : undefined,
         takenAt: row.taken_at ? row.taken_at.toISOString() : undefined,
         createdAt: row.created_at.toISOString(),
+        isFavorite: Boolean(row.is_favorite),
         thumbUrl,
       };
     })
@@ -103,15 +120,89 @@ export async function listMedia(query: ListMediaQuery) {
     nextCursor = encodeCursor(lastRow.sort_time.toISOString(), lastRow.id);
   }
 
+  const thumbCount = items.filter((i) => !!i.thumbUrl).length;
+  if (thumbCount > 0) {
+    recordClassB(thumbCount).catch(() => {});
+  }
+
   return {
     items,
     nextCursor,
   };
 }
 
+export async function getRandomMedia(limitPerFolder = 3, totalLimit = 50) {
+  const sql = `
+    WITH ranked_media AS (
+      SELECT m.id, m.owner_id, m.type, m.object_key, m.thumb_key, m.mime, m.size_bytes,
+             m.width, m.height, m.duration_sec, m.taken_at, m.created_at, m.folder_id,
+             m.is_favorite,
+             u.name AS owner_name, u.email AS owner_email,
+             f.name AS folder_name,
+             f.event_date::text AS folder_event_date,
+             ROW_NUMBER() OVER (
+               PARTITION BY COALESCE(m.folder_id::text, 'unfiled') 
+               ORDER BY RANDOM()
+             ) as rn
+      FROM media m
+      LEFT JOIN users u ON m.owner_id = u.id
+      LEFT JOIN folders f ON m.folder_id = f.id
+      WHERE m.status = 'ready' AND m.thumb_key IS NOT NULL
+    )
+    SELECT * FROM ranked_media
+    WHERE rn <= $1
+    ORDER BY RANDOM()
+    LIMIT $2
+  `;
+
+  const result = await pool.query(sql, [limitPerFolder, totalLimit]);
+  const rows = result.rows;
+
+  const items = await Promise.all(
+    rows.map(async (row) => {
+      let thumbUrl: string | undefined;
+      if (row.thumb_key) {
+        try {
+          thumbUrl = await r2Service.getPresignedGetUrl(row.thumb_key, 3600);
+        } catch (err) {
+          console.error(`Failed to generate thumb presigned GET for ${row.id}:`, err);
+        }
+      }
+
+      return {
+        id: row.id,
+        ownerId: row.owner_id,
+        ownerName: row.owner_name || undefined,
+        ownerEmail: row.owner_email || undefined,
+        folderId: row.folder_id || undefined,
+        folderName: row.folder_name || undefined,
+        folderEventDate: row.folder_event_date ? row.folder_event_date.split('T')[0] : undefined,
+        filename: path.basename(row.object_key),
+        type: row.type,
+        mime: row.mime,
+        sizeBytes: Number(row.size_bytes),
+        width: row.width,
+        height: row.height,
+        durationSec: row.duration_sec ? Number(row.duration_sec) : undefined,
+        takenAt: row.taken_at ? row.taken_at.toISOString() : undefined,
+        createdAt: row.created_at.toISOString(),
+        isFavorite: Boolean(row.is_favorite),
+        thumbUrl,
+      };
+    })
+  );
+
+  const thumbCount = items.filter((i) => !!i.thumbUrl).length;
+  if (thumbCount > 0) {
+    recordClassB(thumbCount).catch(() => {});
+  }
+
+  return { items };
+}
+
 export async function getMediaOriginalUrl(mediaId: string, asDownload = false) {
   const result = await pool.query(
-    `SELECT id, object_key, mime, size_bytes, status
+    `SELECT id, object_key, thumb_key, mime, size_bytes, status
      FROM media
      WHERE id = $1 AND status = 'ready'`,
     [mediaId]
@@ -129,8 +220,16 @@ export async function getMediaOriginalUrl(mediaId: string, asDownload = false) {
     asDownload ? filename : undefined
   );
 
+  let thumbUrl: string | undefined;
+  if (media.thumb_key) {
+    thumbUrl = await r2Service.getPresignedGetUrl(media.thumb_key, 3600);
+  }
+
+  recordClassB(media.thumb_key ? 2 : 1).catch(() => {});
+
   return {
     url,
+    thumbUrl,
     mime: media.mime,
     sizeBytes: Number(media.size_bytes),
     filename,
@@ -166,6 +265,7 @@ export async function deleteMedia(mediaId: string, userId: string) {
 
   // Delete from database
   await pool.query('DELETE FROM media WHERE id = $1', [media.id]);
+  recordClassA(1).catch(() => {});
 
   return { success: true };
 }
@@ -298,6 +398,9 @@ export async function batchDeleteMedia(ids: string[], userId: string) {
     `DELETE FROM media WHERE id = ANY($1::uuid[])`,
     [matchedIds]
   );
+  if (matchedIds.length > 0) {
+    recordClassA(matchedIds.length).catch(() => {});
+  }
 
   return { deletedCount: matchedIds.length };
 }
@@ -355,3 +458,53 @@ export async function batchMoveMedia(
 
   return { movedCount: rows.length };
 }
+
+export async function toggleMediaFavorite(mediaId: string, forcedValue?: boolean) {
+  let query: string;
+  let params: any[];
+
+  if (typeof forcedValue === 'boolean') {
+    query = `
+      UPDATE media
+      SET is_favorite = $1
+      WHERE id = $2 AND status = 'ready'
+      RETURNING id, is_favorite
+    `;
+    params = [forcedValue, mediaId];
+  } else {
+    query = `
+      UPDATE media
+      SET is_favorite = NOT is_favorite
+      WHERE id = $1 AND status = 'ready'
+      RETURNING id, is_favorite
+    `;
+    params = [mediaId];
+  }
+
+  const result = await pool.query(query, params);
+  if (result.rows.length === 0) {
+    throw new AppError(404, 'MEDIA_NOT_FOUND', 'File kenangan tidak ditemukan');
+  }
+
+  return {
+    id: result.rows[0].id,
+    isFavorite: Boolean(result.rows[0].is_favorite),
+  };
+}
+
+export async function batchSetFavorite(mediaIds: string[], isFavorite = true) {
+  const result = await pool.query(
+    `UPDATE media
+     SET is_favorite = $1
+     WHERE id = ANY($2::uuid[]) AND status = 'ready'
+     RETURNING id, is_favorite`,
+    [isFavorite, mediaIds]
+  );
+
+  return {
+    updatedIds: result.rows.map((r) => r.id),
+    isFavorite,
+    count: result.rows.length,
+  };
+}
+
