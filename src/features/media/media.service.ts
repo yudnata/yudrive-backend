@@ -264,3 +264,89 @@ export async function moveMedia(
     thumbUrl,
   };
 }
+
+export async function batchDeleteMedia(ids: string[], userId: string) {
+  if (ids.length === 0) return { deletedCount: 0 };
+
+  const result = await pool.query(
+    `SELECT id, owner_id, object_key, thumb_key
+     FROM media
+     WHERE id = ANY($1::uuid[]) AND owner_id = $2`,
+    [ids, userId]
+  );
+
+  const rows = result.rows;
+  if (rows.length === 0) return { deletedCount: 0 };
+
+  // Delete objects from Cloudflare R2
+  await Promise.all(
+    rows.map(async (row) => {
+      await r2Service.deleteObject(row.object_key).catch(() => {});
+      if (row.thumb_key) {
+        await r2Service.deleteObject(row.thumb_key).catch(() => {});
+      }
+    })
+  );
+
+  const matchedIds = rows.map((r) => r.id);
+  await pool.query(
+    `DELETE FROM media WHERE id = ANY($1::uuid[])`,
+    [matchedIds]
+  );
+
+  return { deletedCount: matchedIds.length };
+}
+
+export async function batchMoveMedia(
+  ids: string[],
+  targetFolderId: string | null | undefined,
+  userId: string
+) {
+  if (ids.length === 0) return { movedCount: 0 };
+
+  const normalizedTargetFolderId = targetFolderId || null;
+
+  if (normalizedTargetFolderId) {
+    const folderCheck = await pool.query(`SELECT id FROM folders WHERE id = $1`, [normalizedTargetFolderId]);
+    if (folderCheck.rows.length === 0) {
+      throw new AppError(404, 'FOLDER_NOT_FOUND', 'Folder tujuan tidak ditemukan.');
+    }
+  }
+
+  const result = await pool.query(
+    `SELECT id, owner_id, object_key, folder_id
+     FROM media
+     WHERE id = ANY($1::uuid[]) AND owner_id = $2`,
+    [ids, userId]
+  );
+
+  const rows = result.rows;
+  if (rows.length === 0) return { movedCount: 0 };
+
+  const folderPrefix = await getFolderCloudflarePath(normalizedTargetFolderId);
+
+  // Move each file in Cloudflare R2 and update database
+  await Promise.all(
+    rows.map(async (row) => {
+      const oldObjectKey: string = row.object_key;
+      const filename = path.basename(oldObjectKey);
+      const newObjectKey = `${folderPrefix}/${filename}`;
+
+      if (newObjectKey !== oldObjectKey) {
+        try {
+          await r2Service.copyObject(oldObjectKey, newObjectKey);
+          await r2Service.deleteObject(oldObjectKey);
+        } catch (err) {
+          console.error(`Failed to move object in Cloudflare R2 from ${oldObjectKey} to ${newObjectKey}:`, err);
+        }
+      }
+
+      await pool.query(
+        `UPDATE media SET folder_id = $1, object_key = $2, updated_at = now() WHERE id = $3`,
+        [normalizedTargetFolderId, newObjectKey, row.id]
+      );
+    })
+  );
+
+  return { movedCount: rows.length };
+}

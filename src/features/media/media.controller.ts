@@ -3,12 +3,16 @@ import {
   listMediaQuerySchema,
   mediaIdParamSchema,
   moveMediaSchema,
+  batchDeleteSchema,
+  batchMoveSchema,
 } from './media.schema';
 import {
   listMedia,
   getMediaOriginalUrl,
   deleteMedia,
   moveMedia,
+  batchDeleteMedia,
+  batchMoveMedia,
 } from './media.service';
 
 export async function handleListMedia(
@@ -116,6 +120,56 @@ export async function handleMoveMedia(
     const userId = req.user!.id;
     const media = await moveMedia(paramResult.data.id, bodyResult.data.folderId, userId);
     res.status(200).json(media);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleBatchDelete(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const parseResult = batchDeleteSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: parseResult.error.issues[0]?.message || 'Data batch delete tidak valid.',
+        },
+      });
+      return;
+    }
+
+    const userId = req.user!.id;
+    const result = await batchDeleteMedia(parseResult.data.ids, userId);
+    res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleBatchMove(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const parseResult = batchMoveSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: parseResult.error.issues[0]?.message || 'Data batch move tidak valid.',
+        },
+      });
+      return;
+    }
+
+    const userId = req.user!.id;
+    const result = await batchMoveMedia(parseResult.data.ids, parseResult.data.folderId, userId);
+    res.status(200).json(result);
   } catch (err) {
     next(err);
   }
