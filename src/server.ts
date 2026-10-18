@@ -3,6 +3,7 @@ import { env } from './config/env';
 
 const app = createApp();
 
+// Initialized with live Neon PostgreSQL
 const server = app.listen(env.PORT, () => {
   console.log(`Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);
 });
