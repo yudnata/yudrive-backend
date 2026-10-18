@@ -10,4 +10,9 @@ export const mediaIdParamSchema = z.object({
   id: z.string().uuid('ID media tidak valid'),
 });
 
+export const moveMediaSchema = z.object({
+  folderId: z.string().uuid('ID folder tidak valid').nullable().optional(),
+});
+
 export type ListMediaQuery = z.infer<typeof listMediaQuerySchema>;
+export type MoveMediaInput = z.infer<typeof moveMediaSchema>;

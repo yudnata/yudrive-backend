@@ -5,6 +5,7 @@ import { env } from '../../config/env';
 import { AppError } from '../../middleware/errorHandler';
 import { r2Service } from './r2.service';
 import { getStorageUsage } from '../users/users.service';
+import { getFolderCloudflarePath } from '../folders/folders.service';
 import {
   InitUploadInput,
   CompleteUploadInput,
@@ -43,9 +44,10 @@ export async function initUpload(userId: string, input: InitUploadInput) {
   const takenAtDate = input.takenAt ? new Date(input.takenAt) : new Date();
   const year = takenAtDate.getFullYear();
 
-  // Object keys in R2:
-  // u/{ownerId}/{yyyy}/{mediaId}.{ext} for original, t/{mediaId}.webp for thumbnail
-  const objectKey = `u/${userId}/${year}/${mediaId}.${ext}`;
+  // Object keys in Cloudflare R2 matching folder structure:
+  // folders/{folderName}/{mediaId}.{ext} or folders/utama/{mediaId}.{ext}
+  const folderPrefix = await getFolderCloudflarePath(input.folderId);
+  const objectKey = `${folderPrefix}/${mediaId}.${ext}`;
   const thumbKey = `t/${mediaId}.webp`;
 
   let mode: 'single' | 'multipart' = 'single';

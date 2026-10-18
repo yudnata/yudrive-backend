@@ -3,6 +3,7 @@ import { pool } from '../../config/db';
 import { AppError } from '../../middleware/errorHandler';
 import { r2Service } from '../uploads/r2.service';
 import { cleanupStalePendingMedia } from '../uploads/uploads.service';
+import { getFolderCloudflarePath } from '../folders/folders.service';
 import { ListMediaQuery } from './media.schema';
 
 interface DecodedCursor {
@@ -162,4 +163,104 @@ export async function deleteMedia(mediaId: string, userId: string) {
   await pool.query('DELETE FROM media WHERE id = $1', [media.id]);
 
   return { success: true };
+}
+
+export async function moveMedia(
+  mediaId: string,
+  targetFolderId: string | null | undefined,
+  userId: string
+) {
+  const result = await pool.query(
+    `SELECT id, owner_id, object_key, thumb_key, folder_id, type, mime, size_bytes, width, height, duration_sec, taken_at, created_at
+     FROM media
+     WHERE id = $1`,
+    [mediaId]
+  );
+
+  if (result.rows.length === 0) {
+    throw new AppError(404, 'MEDIA_NOT_FOUND', 'Media tidak ditemukan.');
+  }
+
+  const media = result.rows[0];
+  if (media.owner_id !== userId) {
+    throw new AppError(403, 'FORBIDDEN', 'Hanya pemilik yang dapat memindahkan media ini.');
+  }
+
+  const normalizedTargetFolderId = targetFolderId || null;
+
+  // If target folder is specified, verify it exists
+  if (normalizedTargetFolderId) {
+    const folderCheck = await pool.query(`SELECT id FROM folders WHERE id = $1`, [normalizedTargetFolderId]);
+    if (folderCheck.rows.length === 0) {
+      throw new AppError(404, 'FOLDER_NOT_FOUND', 'Folder tujuan tidak ditemukan.');
+    }
+  }
+
+  // If already in target folder, return current item
+  if (media.folder_id === normalizedTargetFolderId) {
+    let thumbUrl: string | undefined;
+    if (media.thumb_key) {
+      thumbUrl = await r2Service.getPresignedGetUrl(media.thumb_key, 3600).catch(() => undefined);
+    }
+    return {
+      id: media.id,
+      ownerId: media.owner_id,
+      folderId: media.folder_id || undefined,
+      type: media.type,
+      mime: media.mime,
+      sizeBytes: Number(media.size_bytes),
+      width: media.width,
+      height: media.height,
+      durationSec: media.duration_sec ? Number(media.duration_sec) : undefined,
+      takenAt: media.taken_at ? media.taken_at.toISOString() : undefined,
+      createdAt: media.created_at.toISOString(),
+      thumbUrl,
+    };
+  }
+
+  // Calculate new object key in Cloudflare R2
+  const oldObjectKey: string = media.object_key;
+  const filename = path.basename(oldObjectKey);
+  const folderPrefix = await getFolderCloudflarePath(normalizedTargetFolderId);
+  const newObjectKey = `${folderPrefix}/${filename}`;
+
+  // Move in Cloudflare R2 if key changed
+  if (newObjectKey !== oldObjectKey) {
+    try {
+      await r2Service.copyObject(oldObjectKey, newObjectKey);
+      await r2Service.deleteObject(oldObjectKey);
+    } catch (err) {
+      console.error(`Failed to move object in Cloudflare R2 from ${oldObjectKey} to ${newObjectKey}:`, err);
+    }
+  }
+
+  // Update PostgreSQL database record
+  const updatedResult = await pool.query(
+    `UPDATE media
+     SET folder_id = $1, object_key = $2, updated_at = now()
+     WHERE id = $3
+     RETURNING id, owner_id, folder_id, type, mime, size_bytes, width, height, duration_sec, taken_at, created_at, thumb_key`,
+    [normalizedTargetFolderId, newObjectKey, mediaId]
+  );
+
+  const updated = updatedResult.rows[0];
+  let thumbUrl: string | undefined;
+  if (updated.thumb_key) {
+    thumbUrl = await r2Service.getPresignedGetUrl(updated.thumb_key, 3600).catch(() => undefined);
+  }
+
+  return {
+    id: updated.id,
+    ownerId: updated.owner_id,
+    folderId: updated.folder_id || undefined,
+    type: updated.type,
+    mime: updated.mime,
+    sizeBytes: Number(updated.size_bytes),
+    width: updated.width,
+    height: updated.height,
+    durationSec: updated.duration_sec ? Number(updated.duration_sec) : undefined,
+    takenAt: updated.taken_at ? updated.taken_at.toISOString() : undefined,
+    createdAt: updated.created_at.toISOString(),
+    thumbUrl,
+  };
 }

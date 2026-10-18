@@ -2,11 +2,13 @@ import { Request, Response, NextFunction } from 'express';
 import {
   listMediaQuerySchema,
   mediaIdParamSchema,
+  moveMediaSchema,
 } from './media.schema';
 import {
   listMedia,
   getMediaOriginalUrl,
   deleteMedia,
+  moveMedia,
 } from './media.service';
 
 export async function handleListMedia(
@@ -78,6 +80,42 @@ export async function handleDeleteMedia(
     const userId = req.user!.id;
     const result = await deleteMedia(parseResult.data.id, userId);
     res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function handleMoveMedia(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const paramResult = mediaIdParamSchema.safeParse(req.params);
+    if (!paramResult.success) {
+      res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Format ID media tidak valid.',
+        },
+      });
+      return;
+    }
+
+    const bodyResult = moveMediaSchema.safeParse(req.body);
+    if (!bodyResult.success) {
+      res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: bodyResult.error.issues[0]?.message || 'Data pindah folder tidak valid.',
+        },
+      });
+      return;
+    }
+
+    const userId = req.user!.id;
+    const media = await moveMedia(paramResult.data.id, bodyResult.data.folderId, userId);
+    res.status(200).json(media);
   } catch (err) {
     next(err);
   }

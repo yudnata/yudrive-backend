@@ -163,3 +163,30 @@ export async function deleteFolder(folderId: string) {
   await pool.query(`DELETE FROM folders WHERE id = $1`, [folderId]);
   return { success: true };
 }
+
+export async function getFolderCloudflarePath(folderId?: string | null): Promise<string> {
+  if (!folderId) {
+    return 'folders/utama';
+  }
+
+  const segments: string[] = [];
+  let currentId: string | null = folderId;
+
+  while (currentId) {
+    const res: { rows: Array<{ id: string; name: string; parent_id: string | null }> } = await pool.query(
+      `SELECT id, name, parent_id FROM folders WHERE id = $1`,
+      [currentId]
+    );
+    if (res.rows.length === 0) break;
+    const row = res.rows[0];
+    const safeName = row.name.replace(/[/\\?%*:|"<>]/g, '-').trim();
+    segments.unshift(safeName || 'folder');
+    currentId = row.parent_id;
+  }
+
+  if (segments.length === 0) {
+    return 'folders/utama';
+  }
+
+  return `folders/${segments.join('/')}`;
+}
