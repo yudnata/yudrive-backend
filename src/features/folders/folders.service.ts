@@ -2,6 +2,7 @@ import { pool } from '../../config/db';
 import { AppError } from '../../middleware/errorHandler';
 import { r2Service } from '../uploads/r2.service';
 import { CreateFolderInput, UpdateFolderInput } from './folders.schema';
+import { recordClassA } from '../r2-usage/r2-usage.service';
 
 function formatEventDate(val: unknown): string | null {
   if (!val) return null;
@@ -171,8 +172,61 @@ export async function deleteFolder(folderId: string) {
     throw new AppError(404, 'FOLDER_NOT_FOUND', 'Folder tidak ditemukan.');
   }
 
-  // Deleting folder sets media.folder_id to null automatically (via ON DELETE SET NULL)
-  await pool.query(`DELETE FROM folders WHERE id = $1`, [folderId]);
+  // 1. Gather this folder and all subfolders recursively
+  const folderIds: string[] = [folderId];
+  let queue: string[] = [folderId];
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    const children = await pool.query(`SELECT id FROM folders WHERE parent_id = $1`, [curr]);
+    for (const row of children.rows) {
+      folderIds.push(row.id);
+      queue.push(row.id);
+    }
+  }
+
+  // 2. Find all media associated with these folders
+  const mediaRows: Array<{ id: string; object_key: string; thumb_key: string | null }> = [];
+  for (const fid of folderIds) {
+    const res = await pool.query(
+      `SELECT id, object_key, thumb_key FROM media WHERE folder_id = $1`,
+      [fid]
+    );
+    for (const row of res.rows) {
+      mediaRows.push(row);
+    }
+  }
+
+  // 3. Delete files from Cloudflare R2
+  let r2DeleteCount = 0;
+  for (const m of mediaRows) {
+    if (m.object_key) {
+      await r2Service.deleteObject(m.object_key).catch(() => {});
+      r2DeleteCount++;
+    }
+    if (m.thumb_key) {
+      await r2Service.deleteObject(m.thumb_key).catch(() => {});
+      r2DeleteCount++;
+    }
+  }
+  if (r2DeleteCount > 0) {
+    recordClassA(r2DeleteCount).catch(() => {});
+  }
+
+  // 4. Nullify cover_media_id on folders before deleting media
+  for (const fid of folderIds) {
+    await pool.query(`UPDATE folders SET cover_media_id = NULL WHERE id = $1`, [fid]);
+  }
+
+  // 5. Delete media from database
+  for (const fid of folderIds) {
+    await pool.query(`DELETE FROM media WHERE folder_id = $1`, [fid]);
+  }
+
+  // 6. Delete folders in bottom-up order (children first)
+  for (const fid of [...folderIds].reverse()) {
+    await pool.query(`DELETE FROM folders WHERE id = $1`, [fid]);
+  }
+
   return { success: true };
 }
 
