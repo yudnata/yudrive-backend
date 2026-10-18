@@ -42,7 +42,7 @@ export async function listFolders(parentId?: string | null, all?: boolean) {
      LEFT JOIN media cov ON cov.id = f.cover_media_id AND cov.status = 'ready'
      WHERE ${whereClause}
      GROUP BY f.id, f.owner_id, f.name, f.parent_id, f.cover_media_id, f.event_date, f.created_at, f.updated_at, cov.thumb_key
-     ORDER BY f.event_date DESC NULLS LAST, f.name ASC`,
+     ORDER BY f.created_at ASC`,
     queryParams
   );
 
