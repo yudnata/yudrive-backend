@@ -78,14 +78,58 @@ export async function listMedia(query: ListMediaQuery) {
     }
   }
 
+  if (query.type && query.type !== 'all') {
+    params.push(query.type);
+    sql += ` AND m.type = $${params.length}`;
+  }
+
+  if (query.author && query.author !== 'all') {
+    if (query.author.toLowerCase() === 'yudhi') {
+      params.push('%yudhi%');
+      sql += ` AND (LOWER(COALESCE(u.name, '')) LIKE $${params.length} OR LOWER(COALESCE(u.email, '')) LIKE $${params.length})`;
+    } else if (query.author.toLowerCase() === 'wina') {
+      params.push('%wina%');
+      sql += ` AND (LOWER(COALESCE(u.name, '')) LIKE $${params.length} OR LOWER(COALESCE(u.email, '')) LIKE $${params.length})`;
+    } else {
+      params.push(query.author);
+      sql += ` AND m.owner_id = $${params.length}::uuid`;
+    }
+  }
+
+  if (query.search && query.search.trim()) {
+    const s = `%${query.search.trim().toLowerCase()}%`;
+    params.push(s);
+    sql += ` AND (
+      LOWER(COALESCE(f.name, '')) LIKE $${params.length} OR
+      LOWER(m.object_key) LIKE $${params.length} OR
+      LOWER(COALESCE(u.name, '')) LIKE $${params.length} OR
+      LOWER(COALESCE(u.email, '')) LIKE $${params.length}
+    )`;
+  }
+
+  const isAsc = query.sortBy === 'date-asc';
   if (cursor) {
     params.push(cursor.sortTime, cursor.id);
-    sql += ` AND (COALESCE(f.event_date, m.taken_at, m.created_at), m.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+    const op = isAsc ? '>' : '<';
+    sql += ` AND (COALESCE(f.event_date, m.taken_at, m.created_at), m.id) ${op} ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+  }
+
+  let orderClause = 'sort_time DESC, m.id DESC';
+  if (query.sortBy === 'date-asc') {
+    orderClause = 'sort_time ASC, m.id ASC';
+  } else if (query.sortBy === 'size-desc') {
+    orderClause = 'm.size_bytes DESC, m.id DESC';
+  } else if (query.sortBy === 'size-asc') {
+    orderClause = 'm.size_bytes ASC, m.id ASC';
+  } else if (query.sortBy === 'name-asc') {
+    orderClause = 'LOWER(COALESCE(f.name, m.object_key)) ASC, m.id ASC';
+  } else if (query.sortBy === 'name-desc') {
+    orderClause = 'LOWER(COALESCE(f.name, m.object_key)) DESC, m.id DESC';
   }
 
   const limitParamIndex = params.length + 1;
   params.push(limit + 1);
-  sql += ` ORDER BY sort_time DESC, m.id DESC LIMIT $${limitParamIndex}`;
+  sql += ` ORDER BY ${orderClause} LIMIT $${limitParamIndex}`;
 
   const result = await pool.query(sql, params);
   const hasMore = result.rows.length > limit;

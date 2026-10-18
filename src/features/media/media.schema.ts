@@ -5,6 +5,10 @@ export const listMediaQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   folderId: z.string().optional(),
   favorite: z.preprocess((val) => val === 'true' || val === true, z.boolean()).optional(),
+  search: z.string().optional(),
+  type: z.enum(['all', 'photo', 'video']).optional(),
+  author: z.string().optional(),
+  sortBy: z.enum(['date-desc', 'date-asc', 'name-asc', 'name-desc', 'size-desc', 'size-asc']).optional(),
 });
 
 export const mediaIdParamSchema = z.object({
